@@ -21,8 +21,6 @@ gzip compressed data files in a temporary directory that is automatically
 cleaned up when the :py:class:`~pgdumplib.dump.Dump` instance is released.
 
 """
-from __future__ import annotations
-
 import contextlib
 import dataclasses
 import datetime
@@ -62,10 +60,10 @@ class Dump:
     """
     def __init__(
             self, dbname: str = 'pgdumplib', encoding: str = 'UTF8',
-            converter: typing.Optional[
+            converter: typing.Optional[typing.Union[
                 typing.Type[converters.DataConverter],
                 typing.Type[converters.NoOpConverter],
-                typing.Type[converters.SmartDataConverter]] = None,
+                typing.Type[converters.SmartDataConverter]]] = None,
             appear_as: str = '12.0'):
         self.compression = False
         self.dbname = dbname
@@ -116,7 +114,7 @@ class Dump:
             dependencies: typing.Optional[typing.List[int]] = None,
             tablespace: typing.Optional[str] = None,
             tableam: typing.Optional[str] = None,
-            dump_id: typing.Optional[int] = None) -> Entry:
+            dump_id: typing.Optional[int] = None) -> 'Entry':
         """Add an entry to the dump
 
         The ``namespace`` and ``tag`` are required.
@@ -203,7 +201,7 @@ class Dump:
                         yield oid, handle.read(length)
                         oid = read_oid(handle)
 
-    def get_entry(self, dump_id: int) -> typing.Optional[Entry]:
+    def get_entry(self, dump_id: int) -> typing.Optional['Entry']:
         """Return the entry for the given `dump_id`
 
         :param int dump_id: The dump ID of the entry to return.
@@ -215,7 +213,7 @@ class Dump:
                 return entry
         return None
 
-    def load(self, path: os.PathLike) -> Dump:
+    def load(self, path: os.PathLike) -> 'Dump':
         """Load the Dumpfile, including extracting all data into a temporary
         directory
 
@@ -266,7 +264,7 @@ class Dump:
         return self
 
     def lookup_entry(self, desc: str, namespace: str, tag: str) \
-            -> typing.Optional[Entry]:
+            -> typing.Optional['Entry']:
         """Return the entry for the given namespace and tag
 
         :param str desc: The desc / object type of the entry
@@ -315,8 +313,8 @@ class Dump:
         raise exceptions.EntityNotFoundError(namespace=namespace, table=table)
 
     @contextlib.contextmanager
-    def table_data_writer(self, entry: Entry, columns: typing.Sequence) \
-            -> typing.Generator[TableData, None, None]:
+    def table_data_writer(self, entry: 'Entry', columns: typing.Sequence) \
+            -> typing.Generator['TableData', None, None]:
         """A context manager that is used to return a
         :py:class:`~pgdumplib.dump.TableData` instance, which can be used
         to add table data to the dump.
@@ -377,7 +375,7 @@ class Dump:
             handle.write(self._read_data())
 
     @property
-    def _data_entries(self) -> typing.List[Entry]:
+    def _data_entries(self) -> typing.List['Entry']:
         """Return the list of entries that are in the data section
 
         :rtype: list
@@ -748,7 +746,7 @@ class Dump:
         saved = self._write_section(constants.SECTION_NONE, [], saved)
         LOGGER.debug('Wrote %i of %i entries', len(saved), len(self.entries))
 
-    def _write_entry(self, entry: Entry) -> typing.NoReturn:
+    def _write_entry(self, entry: 'Entry') -> typing.NoReturn:
         """Write the entry
 
         :param pgdumplib.dump.Entry entry: The entry to write
