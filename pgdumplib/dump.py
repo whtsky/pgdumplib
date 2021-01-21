@@ -58,13 +58,14 @@ class Dump:
         (Default: :py:class:`pgdumplib.converters.DataConverter`)
 
     """
+
     def __init__(
-            self, dbname: str = 'pgdumplib', encoding: str = 'UTF8',
-            converter: typing.Optional[typing.Union[
-                typing.Type[converters.DataConverter],
-                typing.Type[converters.NoOpConverter],
-                typing.Type[converters.SmartDataConverter]]] = None,
-            appear_as: str = '12.0'):
+        self, dbname: str = 'pgdumplib', encoding: str = 'UTF8',
+        converter: typing.Optional[typing.Union[
+            typing.Type[converters.DataConverter],
+            typing.Type[converters.NoOpConverter],
+            typing.Type[converters.SmartDataConverter]]] = None,
+        appear_as: str = '12.0'):
         self.compression = False
         self.dbname = dbname
         self.dump_version = VERSION_INFO.format(appear_as, version)
@@ -87,7 +88,6 @@ class Dump:
         converter = converter or converters.DataConverter
         self._converter: converters.DataConverter = converter()
         self._format: str = 'Custom'
-        self._handle: typing.Optional[typing.BinaryIO] = None
         self._intsize: int = 4
         self._offsize: int = 8
         self._temp_dir = tempfile.TemporaryDirectory()
@@ -103,18 +103,18 @@ class Dump:
             self._format, self.timestamp.isoformat(), len(self.entries))
 
     def add_entry(
-            self,
-            desc: str,
-            namespace: typing.Optional[str] = None,
-            tag: typing.Optional[str] = None,
-            owner: typing.Optional[str] = None,
-            defn: typing.Optional[str] = None,
-            drop_stmt: typing.Optional[str] = None,
-            copy_stmt: typing.Optional[str] = None,
-            dependencies: typing.Optional[typing.List[int]] = None,
-            tablespace: typing.Optional[str] = None,
-            tableam: typing.Optional[str] = None,
-            dump_id: typing.Optional[int] = None) -> 'Entry':
+        self,
+        desc: str,
+        namespace: typing.Optional[str] = None,
+        tag: typing.Optional[str] = None,
+        owner: typing.Optional[str] = None,
+        defn: typing.Optional[str] = None,
+        drop_stmt: typing.Optional[str] = None,
+        copy_stmt: typing.Optional[str] = None,
+        dependencies: typing.Optional[typing.List[int]] = None,
+        tablespace: typing.Optional[str] = None,
+        tableam: typing.Optional[str] = None,
+        dump_id: typing.Optional[int] = None) -> 'Entry':
         """Add an entry to the dump
 
         The ``namespace`` and ``tag`` are required.
@@ -185,6 +185,7 @@ class Dump:
         :rtype: tuple(int, bytes)
 
         """
+
         def read_oid(fd: typing.BinaryIO) -> typing.Optional[int]:
             """Small helper function to deduplicate code"""
             try:
@@ -213,7 +214,7 @@ class Dump:
                 return entry
         return None
 
-    def load(self, path: os.PathLike) -> 'Dump':
+    def load(self, fp: typing.BinaryIO) -> 'Dump':
         """Load the Dumpfile, including extracting all data into a temporary
         directory
 
@@ -222,26 +223,20 @@ class Dump:
         :raises: :py:exc:`ValueError`
 
         """
-        if not pathlib.Path(path).exists():
-            raise ValueError('Path {!r} does not exist'.format(path))
-
-        LOGGER.debug('Loading dump file from %s', path)
-
         self.entries = []  # Wipe out pre-existing entries
-        self._handle = open(path, 'rb')
-        self._read_header()
+        self._read_header(fp)
         if not constants.MIN_VER <= self.version <= constants.MAX_VER:
             raise ValueError(
                 'Unsupported backup version: {}.{}.{}'.format(
                     *self.version))
 
-        self.compression = self._read_int() != 0
-        self.timestamp = self._read_timestamp()
-        self.dbname = self._read_bytes().decode(self.encoding)
-        self.server_version = self._read_bytes().decode(self.encoding)
-        self.dump_version = self._read_bytes().decode(self.encoding)
+        self.compression = self._read_int(fp) != 0
+        self.timestamp = self._read_timestamp(fp)
+        self.dbname = self._read_bytes(fp).decode(self.encoding)
+        self.server_version = self._read_bytes(fp).decode(self.encoding)
+        self.dump_version = self._read_bytes(fp).decode(self.encoding)
 
-        self._read_entries()
+        self._read_entries(fp)
         self._set_encoding()
 
         # Cache table data and blobs
@@ -250,21 +245,21 @@ class Dump:
                 continue
             elif entry.data_state != constants.K_OFFSET_POS_SET:
                 raise RuntimeError('Unsupported data format')
-            self._handle.seek(entry.offset, io.SEEK_SET)
-            block_type, dump_id = self._read_block_header()
+            fp.seek(entry.offset, io.SEEK_SET)
+            block_type, dump_id = self._read_block_header(fp)
             if not dump_id or dump_id != entry.dump_id:
                 raise RuntimeError('Dump IDs do not match ({} != {}'.format(
                     dump_id, entry.dump_id))
             if block_type == constants.BLK_DATA:
                 self._cache_table_data(dump_id)
             elif block_type == constants.BLK_BLOBS:
-                self._cache_blobs(dump_id)
+                self._cache_blobs(fp, dump_id)
             else:
                 raise RuntimeError('Unknown block type: {}'.format(block_type))
         return self
 
     def lookup_entry(self, desc: str, namespace: str, tag: str) \
-            -> typing.Optional['Entry']:
+        -> typing.Optional['Entry']:
         """Return the entry for the given namespace and tag
 
         :param str desc: The desc / object type of the entry
@@ -282,22 +277,18 @@ class Dump:
                 return entry
         return None
 
-    def save(self, path: os.PathLike) -> typing.NoReturn:
+    def save(self, fp: typing.BinaryIO) -> typing.NoReturn:
         """Save the Dump file to the specified path
 
         :param os.PathLike path: The path to save the dump to
 
         """
-        if getattr(self, '_handle', None) and not self._handle.closed:
-            self._handle.close()
         self.compression = False
-        self._handle = open(path, 'wb')
-        self._save()
-        self._handle.close()
+        self._save(fp)
 
     def table_data(self, namespace: str, table: str) \
-            -> typing.Generator[
-                typing.Union[str, typing.Tuple[typing.Any, ...]], None, None]:
+        -> typing.Generator[
+            typing.Union[str, typing.Tuple[typing.Any, ...]], None, None]:
         """Iterator that returns data for the given namespace and table
 
         :param str namespace: The namespace/schema for the table
@@ -314,7 +305,7 @@ class Dump:
 
     @contextlib.contextmanager
     def table_data_writer(self, entry: 'Entry', columns: typing.Sequence) \
-            -> typing.Generator['TableData', None, None]:
+        -> typing.Generator['TableData', None, None]:
         """A context manager that is used to return a
         :py:class:`~pgdumplib.dump.TableData` instance, which can be used
         to add table data to the dump.
@@ -351,7 +342,7 @@ class Dump:
         """
         return self._vmaj, self._vmin, self._vrev
 
-    def _cache_blobs(self, dump_id: int) -> typing.NoReturn:
+    def _cache_blobs(self, fp: typing.BinaryIO, dump_id: int) -> typing.NoReturn:
         """Create a temp cache file for blob data
 
         :param int dump_id: The dump ID for the filename
@@ -359,7 +350,7 @@ class Dump:
         """
         count = 0
         with self._tempfile(dump_id, 'wb') as handle:
-            for oid, blob in self._read_blobs():
+            for oid, blob in self._read_blobs(fp):
                 handle.write(struct.pack('I', oid))
                 handle.write(struct.pack('I', len(blob)))
                 handle.write(blob)
@@ -385,7 +376,7 @@ class Dump:
 
     @staticmethod
     def _get_k_version(appear_as: typing.Tuple[int, int]) \
-            -> typing.Tuple[int, int, int]:
+        -> typing.Tuple[int, int, int]:
         for (min_ver, max_ver), value in constants.K_VERSION_MAP.items():
             if min_ver <= appear_as <= max_ver:
                 return value
@@ -400,50 +391,50 @@ class Dump:
         """
         return max(e.dump_id for e in self.entries) + 1
 
-    def _read_blobs(self) -> typing.Generator[
-            typing.Tuple[int, bytes], None, None]:
+    def _read_blobs(self, fp: typing.BinaryIO) -> typing.Generator[
+        typing.Tuple[int, bytes], None, None]:
         """Read blobs, returning a tuple of the blob ID and the blob data
 
         :rtype: (int, bytes)
         :raises: :exc:`RuntimeError`
 
         """
-        oid = self._read_int()
+        oid = self._read_int(fp)
         while oid is not None and oid > 0:
             data = self._read_data()
             yield oid, data
-            oid = self._read_int()
+            oid = self._read_int(fp)
             if oid == 0:
-                oid = self._read_int()
+                oid = self._read_int(fp)
 
-    def _read_block_header(self) -> typing.Tuple[bytes, typing.Optional[int]]:
+    def _read_block_header(self, fp: typing.BinaryIO) -> typing.Tuple[bytes, typing.Optional[int]]:
         """Read the block header in
 
         :rtype: bytes, int
 
         """
-        return self._handle.read(1), self._read_int()
+        return fp.read(1), self._read_int(fp)
 
-    def _read_byte(self) -> typing.Optional[int]:
+    def _read_byte(self, fp: typing.BinaryIO) -> typing.Optional[int]:
         """Read in an individual byte
 
         :rtype: int
 
         """
         try:
-            return struct.unpack('B', self._handle.read(1))[0]
+            return struct.unpack('B', fp.read(1))[0]
         except struct.error:
             return None
 
-    def _read_bytes(self) -> bytes:
+    def _read_bytes(self, fp: typing.BinaryIO) -> bytes:
         """Read in a byte stream
 
         :rtype: bytes
 
         """
-        length = self._read_int()
+        length = self._read_int(fp)
         if length and length > 0:
-            value = self._handle.read(length)
+            value = fp.read(length)
             return value
         return b''
 
@@ -457,7 +448,7 @@ class Dump:
             return self._read_data_compressed()
         return self._read_data_uncompressed()
 
-    def _read_data_compressed(self) -> bytes:
+    def _read_data_compressed(self, fp: typing.BinaryIO) -> bytes:
         """Read a compressed data block
 
         :rtype: bytes
@@ -467,17 +458,17 @@ class Dump:
         chunk = b''
         decompress = zlib.decompressobj()
         while True:
-            chunk_size = self._read_int()
+            chunk_size = self._read_int(fp)
             if not chunk_size:  # pragma: nocover
                 break
-            chunk += self._handle.read(chunk_size)
+            chunk += fp.read(chunk_size)
             buffer.write(decompress.decompress(chunk))
             chunk = decompress.unconsumed_tail
             if chunk_size < constants.ZLIB_IN_SIZE:
                 break
         return buffer.getvalue()
 
-    def _read_data_uncompressed(self) -> bytes:
+    def _read_data_uncompressed(self, fp: typing.BinaryIO) -> bytes:
         """Read an uncompressed data block
 
         :rtype: bytes
@@ -485,13 +476,13 @@ class Dump:
         """
         buffer = io.BytesIO()
         while True:
-            block_length = self._read_int()
+            block_length = self._read_int(fp)
             if not block_length or block_length <= 0:
                 break
-            buffer.write(self._handle.read(block_length))
+            buffer.write(fp.read(block_length))
         return buffer.getvalue()
 
-    def _read_dependencies(self) -> list:
+    def _read_dependencies(self, fp: typing.BinaryIO) -> list:
         """Read in the dependencies for an entry.
 
         :rtype: list
@@ -499,39 +490,39 @@ class Dump:
         """
         values = set({})
         while True:
-            value = self._read_bytes()
+            value = self._read_bytes(fp)
             if not value:
                 break
             values.add(int(value))
         return sorted(values)
 
-    def _read_entries(self) -> typing.NoReturn:
+    def _read_entries(self, fp: typing.BinaryIO) -> typing.NoReturn:
         """Read in all of the entries"""
-        for _i in range(0, self._read_int() or 0):
-            self._read_entry()
+        for _i in range(0, self._read_int(fp) or 0):
+            self._read_entry(fp)
 
-    def _read_entry(self) -> typing.NoReturn:
+    def _read_entry(self, fp: typing.BinaryIO) -> typing.NoReturn:
         """Read in an individual entry and append it to the entries stack"""
-        dump_id = self._read_int()
-        had_dumper = bool(self._read_int())
-        table_oid = self._read_bytes().decode(self.encoding)
-        oid = self._read_bytes().decode(self.encoding)
-        tag = self._read_bytes().decode(self.encoding)
-        desc = self._read_bytes().decode(self.encoding)
-        self._read_int()  # Section is mapped, no need to assign
-        defn = self._read_bytes().decode(self.encoding)
-        drop_stmt = self._read_bytes().decode(self.encoding)
-        copy_stmt = self._read_bytes().decode(self.encoding)
-        namespace = self._read_bytes().decode(self.encoding)
-        tablespace = self._read_bytes().decode(self.encoding)
+        dump_id = self._read_int(fp)
+        had_dumper = bool(self._read_int(fp))
+        table_oid = self._read_bytes(fp).decode(self.encoding)
+        oid = self._read_bytes(fp).decode(self.encoding)
+        tag = self._read_bytes(fp).decode(self.encoding)
+        desc = self._read_bytes(fp).decode(self.encoding)
+        self._read_int(fp)  # Section is mapped, no need to assign
+        defn = self._read_bytes(fp).decode(self.encoding)
+        drop_stmt = self._read_bytes(fp).decode(self.encoding)
+        copy_stmt = self._read_bytes(fp).decode(self.encoding)
+        namespace = self._read_bytes(fp).decode(self.encoding)
+        tablespace = self._read_bytes(fp).decode(self.encoding)
         if self.version >= (1, 14, 0):
-            tableam = self._read_bytes().decode(self.encoding)
+            tableam = self._read_bytes(fp).decode(self.encoding)
         else:
             tableam = ''
-        owner = self._read_bytes().decode(self.encoding)
-        with_oids = self._read_bytes() == b'true'
-        dependencies = self._read_dependencies()
-        data_state, offset = self._read_offset()
+        owner = self._read_bytes(fp).decode(self.encoding)
+        with_oids = self._read_bytes(fp) == b'true'
+        dependencies = self._read_dependencies(fp)
+        data_state, offset = self._read_offset(fp)
         self.entries.append(Entry(
             dump_id=dump_id, had_dumper=had_dumper, table_oid=table_oid,
             oid=oid, tag=tag, desc=desc, defn=defn, drop_stmt=drop_stmt,
@@ -540,56 +531,56 @@ class Dump:
             dependencies=dependencies, data_state=data_state or 0,
             offset=offset or 0))
 
-    def _read_header(self) -> typing.NoReturn:
+    def _read_header(self, fp: typing.BinaryIO) -> typing.NoReturn:
         """Read in the dump header
 
         :raises: ValueError
 
         """
-        if self._handle.read(5) != constants.MAGIC:
+        if fp.read(5) != constants.MAGIC:
             raise ValueError('Invalid archive header')
-        self._vmaj = struct.unpack('B', self._handle.read(1))[0]
-        self._vmin = struct.unpack('B', self._handle.read(1))[0]
-        self._vrev = struct.unpack('B', self._handle.read(1))[0]
-        self._intsize = struct.unpack('B', self._handle.read(1))[0]
-        self._offsize = struct.unpack('B', self._handle.read(1))[0]
+        self._vmaj = struct.unpack('B', fp.read(1))[0]
+        self._vmin = struct.unpack('B', fp.read(1))[0]
+        self._vrev = struct.unpack('B', fp.read(1))[0]
+        self._intsize = struct.unpack('B', fp.read(1))[0]
+        self._offsize = struct.unpack('B', fp.read(1))[0]
         self._format = constants.FORMATS[struct.unpack(
-            'B', self._handle.read(1))[0]]
+            'B', fp.read(1))[0]]
         LOGGER.debug('Archive version %i.%i.%i',
                      self._vmaj, self._vmin, self._vrev)
 
-    def _read_int(self) -> typing.Optional[int]:
+    def _read_int(self, fp: typing.BinaryIO) -> typing.Optional[int]:
         """Read in a signed integer
 
         :rtype: int or None
 
         """
-        sign = self._read_byte()
+        sign = self._read_byte(fp)
         if sign is None:
             return None
         bs, bv, value = 0, 0, 0
         for _offset in range(0, self._intsize):
-            bv = (self._read_byte() or 0) & 0xFF
+            bv = (self._read_byte(fp) or 0) & 0xFF
             if bv != 0:
                 value += (bv << bs)
             bs += 8
         return -value if sign else value
 
-    def _read_offset(self) -> typing.Tuple[int, int]:
+    def _read_offset(self, fp: typing.BinaryIO) -> typing.Tuple[int, int]:
         """Read in the value for the length of the data stored in the file
 
         :rtype: int, int
 
         """
-        data_state = self._read_byte() or 0
+        data_state = self._read_byte(fp) or 0
         value = 0
         for offset in range(0, self._offsize):
-            bv = self._read_byte() or 0
+            bv = self._read_byte(fp) or 0
             value |= bv << (offset * 8)
         return data_state, value
 
     def _read_table_data(self, dump_id: int) \
-            -> typing.Generator[str, None, None]:
+        -> typing.Generator[str, None, None]:
         """Iterate through the data returning on row at a time
 
         :rtype: str
@@ -605,26 +596,26 @@ class Dump:
         except exceptions.NoDataError:
             pass
 
-    def _read_timestamp(self) -> datetime.datetime:
+    def _read_timestamp(self, fp: typing.BinaryIO) -> datetime.datetime:
         """Read in the timestamp from handle.
 
         :rtype: datetime.datetime
 
         """
         second, minute, hour, day, month, year = (
-            self._read_int(), self._read_int(), self._read_int(),
-            self._read_int(), (self._read_int() or 0) + 1,
-            (self._read_int() or 0) + 1900)
-        self._read_int()  # DST flag
+            self._read_int(fp), self._read_int(fp), self._read_int(fp),
+            self._read_int(fp), (self._read_int(fp) or 0) + 1,
+            (self._read_int(fp) or 0) + 1900)
+        self._read_int(fp)  # DST flag
         return datetime.datetime(year, month, day, hour, minute, second, 0)
 
-    def _save(self) -> typing.NoReturn:
+    def _save(self, fp: typing.BinaryIO) -> typing.NoReturn:
         """Save the dump file to disk"""
-        self._write_toc()
-        self._write_entries()
-        if self._write_data():
-            self._write_toc()  # Overwrite ToC and entries
-            self._write_entries()
+        self._write_toc(fp)
+        self._write_entries(fp)
+        if self._write_data(fp):
+            self._write_toc(fp)  # Overwrite ToC and entries
+            self._write_entries(fp)
 
     def _set_encoding(self) -> typing.NoReturn:
         """If the encoding is found in the dump entries, set the encoding
@@ -640,7 +631,7 @@ class Dump:
 
     @contextlib.contextmanager
     def _tempfile(self, dump_id: int, mode: str) \
-            -> typing.Generator[typing.IO[bytes], None, None]:
+        -> typing.Generator[typing.IO[bytes], None, None]:
         """Open the temp file for the specified dump_id in the specified mode
 
         :param int dump_id: The dump_id for the temp file
@@ -656,7 +647,7 @@ class Dump:
             finally:
                 return
 
-    def _write_blobs(self, dump_id: int) -> int:
+    def _write_blobs(self, fp: typing.BinaryIO, dump_id: int) -> int:
         """Write the blobs for the entry.
 
         :param int dump_id: The entry dump ID for the blobs
@@ -664,57 +655,58 @@ class Dump:
 
         """
         with self._tempfile(dump_id, 'rb') as handle:
-            self._handle.write(constants.BLK_BLOBS)
-            self._write_int(dump_id)
+            fp.write(constants.BLK_BLOBS)
+            self._write_int(fp, dump_id)
             while True:
                 try:
                     oid = struct.unpack('I', handle.read(4))[0]
                 except struct.error:
                     break
                 length = struct.unpack('I', handle.read(4))[0]
-                self._write_int(oid)
-                self._write_int(length)
-                self._handle.write(handle.read(length))
-                self._write_int(0)
-            self._write_int(0)
+                self._write_int(fp, oid)
+                self._write_int(fp, length)
+                fp.write(handle.read(length))
+                self._write_int(fp, 0)
+            self._write_int(fp, 0)
         return length
 
-    def _write_byte(self, value: int) -> typing.NoReturn:
+    def _write_byte(self, fp: typing.BinaryIO, value: int) -> typing.NoReturn:
         """Write a byte to the handle
 
         :param int value: The byte value
 
         """
-        self._handle.write(struct.pack('B', value))
+        fp.write(struct.pack('B', value))
 
-    def _write_data(self) -> set:
+    def _write_data(self, fp: typing.BinaryIO) -> set:
         """Write the data blocks, returning a set of IDs that were written"""
         saved = set({})
         for offset, entry in enumerate(self.entries):
             if entry.section != constants.SECTION_DATA:
                 continue
-            self.entries[offset].offset = self._handle.tell()
+            self.entries[offset].offset = fp.tell()
             size = 0
             if entry.desc == constants.TABLE_DATA:
-                size = self._write_table_data(entry.dump_id)
+                size = self._write_table_data(fp, entry.dump_id)
                 saved.add(entry.dump_id)
             elif entry.desc == constants.BLOBS:
-                size = self._write_blobs(entry.dump_id)
+                size = self._write_blobs(fp, entry.dump_id)
                 saved.add(entry.dump_id)
             if size:
                 self.entries[offset].data_state = constants.K_OFFSET_POS_SET
         return saved
 
-    def _write_entries(self):
-        self._write_int(len(self.entries))
+    def _write_entries(self, fp: typing.BinaryIO):
+        self._write_int(fp, len(self.entries))
         saved = set({})
 
         # Always add these entries first
         for entry in self.entries[0:3]:
-            self._write_entry(entry)
+            self._write_entry(fp, entry)
             saved.add(entry.dump_id)
 
         saved = self._write_section(
+            fp,
             constants.SECTION_PRE_DATA, [
                 constants.GROUP,
                 constants.ROLE,
@@ -735,160 +727,161 @@ class Dump:
                 constants.TYPE,
                 constants.SHELL_TYPE], saved)
 
-        saved = self._write_section(constants.SECTION_DATA, [], saved)
+        saved = self._write_section(fp, constants.SECTION_DATA, [], saved)
 
         saved = self._write_section(
+            fp,
             constants.SECTION_POST_DATA, [
                 constants.CHECK_CONSTRAINT,
                 constants.CONSTRAINT,
                 constants.INDEX], saved)
 
-        saved = self._write_section(constants.SECTION_NONE, [], saved)
+        saved = self._write_section(fp, constants.SECTION_NONE, [], saved)
         LOGGER.debug('Wrote %i of %i entries', len(saved), len(self.entries))
 
-    def _write_entry(self, entry: 'Entry') -> typing.NoReturn:
+    def _write_entry(self, fp: typing.BinaryIO, entry: 'Entry') -> typing.NoReturn:
         """Write the entry
 
         :param pgdumplib.dump.Entry entry: The entry to write
 
         """
         LOGGER.debug('Writing %r', entry)
-        self._write_int(entry.dump_id)
-        self._write_int(int(entry.had_dumper))
-        self._write_str(entry.table_oid or '0')
-        self._write_str(entry.oid or '0')
-        self._write_str(entry.tag)
-        self._write_str(entry.desc)
-        self._write_int(constants.SECTIONS.index(entry.section) + 1)
-        self._write_str(entry.defn)
-        self._write_str(entry.drop_stmt)
-        self._write_str(entry.copy_stmt)
-        self._write_str(entry.namespace)
-        self._write_str(entry.tablespace)
+        self._write_int(fp, entry.dump_id)
+        self._write_int(fp, int(entry.had_dumper))
+        self._write_str(fp, entry.table_oid or '0')
+        self._write_str(fp, entry.oid or '0')
+        self._write_str(fp, entry.tag)
+        self._write_str(fp, entry.desc)
+        self._write_int(fp, constants.SECTIONS.index(entry.section) + 1)
+        self._write_str(fp, entry.defn)
+        self._write_str(fp, entry.drop_stmt)
+        self._write_str(fp, entry.copy_stmt)
+        self._write_str(fp, entry.namespace)
+        self._write_str(fp, entry.tablespace)
         if self.version >= (1, 14, 0):
             LOGGER.debug('Adding tableam')
-            self._write_str(entry.tableam)
-        self._write_str(entry.owner)
-        self._write_str('true' if entry.with_oids else 'false')
+            self._write_str(fp, entry.tableam)
+        self._write_str(fp, entry.owner)
+        self._write_str(fp, 'true' if entry.with_oids else 'false')
         for dependency in entry.dependencies or []:
-            self._write_str(str(dependency))
-        self._write_int(-1)
-        self._write_offset(entry.offset, entry.data_state)
+            self._write_str(fp, str(dependency))
+        self._write_int(fp, -1)
+        self._write_offset(fp, entry.offset, entry.data_state)
 
-    def _write_header(self) -> typing.NoReturn:
+    def _write_header(self, fp: typing.BinaryIO) -> typing.NoReturn:
         """Write the file header"""
         LOGGER.debug('Writing archive version %i.%i.%i',
                      self._vmaj, self._vmin, self._vrev)
-        self._handle.write(constants.MAGIC)
-        self._write_byte(self._vmaj)
-        self._write_byte(self._vmin)
-        self._write_byte(self._vrev)
-        self._write_byte(self._intsize)
-        self._write_byte(self._offsize)
-        self._write_byte(constants.FORMATS.index(self._format))
+        fp.write(constants.MAGIC)
+        self._write_byte(fp, self._vmaj)
+        self._write_byte(fp, self._vmin)
+        self._write_byte(fp, self._vrev)
+        self._write_byte(fp, self._intsize)
+        self._write_byte(fp, self._offsize)
+        self._write_byte(fp, constants.FORMATS.index(self._format))
 
-    def _write_int(self, value: int) -> typing.NoReturn:
+    def _write_int(self, fp: typing.BinaryIO, value: int) -> typing.NoReturn:
         """Write an integer value
 
         :param int value:
 
         """
-        self._write_byte(1 if value < 0 else 0)
+        self._write_byte(fp, 1 if value < 0 else 0)
         if value < 0:
             value = -value
         for _offset in range(0, self._intsize):
-            self._write_byte(value & 0xFF)
+            self._write_byte(fp, value & 0xFF)
             value >>= 8
 
-    def _write_offset(self, value: int, data_state: int) -> typing.NoReturn:
+    def _write_offset(self, fp: typing.BinaryIO, value: int, data_state: int) -> typing.NoReturn:
         """Write the offset value.
 
         :param int value: The value to write
         :param int data_state: The data state flag
 
         """
-        self._write_byte(data_state)
+        self._write_byte(fp, data_state)
         for offset in range(0, self._offsize):
-            self._write_byte(value & 0xFF)
+            self._write_byte(fp, value & 0xFF)
             value >>= 8
 
-    def _write_section(self, section: str, obj_types: list, saved: set) -> set:
+    def _write_section(self, fp: typing.BinaryIO, section: str, obj_types: list, saved: set) -> set:
         for obj_type in obj_types:
             for entry in [e for e in self.entries if e.desc == obj_type]:
-                self._write_entry(entry)
+                self._write_entry(fp, entry)
                 saved.add(entry.dump_id)
         for dump_id in toposort.toposort_flatten(
-                {e.dump_id: set(e.dependencies) for e in self.entries
-                 if e.section == section}, True):
+            {e.dump_id: set(e.dependencies) for e in self.entries
+             if e.section == section}, True):
             if dump_id not in saved:
-                self._write_entry(self.get_entry(dump_id))
+                self._write_entry(fp, self.get_entry(dump_id))
                 saved.add(dump_id)
         return saved
 
-    def _write_str(self, value: str) -> typing.NoReturn:
+    def _write_str(self, fp: typing.BinaryIO, value: str) -> typing.NoReturn:
         """Write a string
 
         :param str value: The string to write
 
         """
         out = value.encode(self.encoding) if value else b''
-        self._write_int(len(out))
+        self._write_int(fp, len(out))
         if out:
             LOGGER.debug('Writing %r', out)
-            self._handle.write(out)
+            fp.write(out)
 
-    def _write_table_data(self, dump_id: int) -> int:
+    def _write_table_data(self, fp: typing.BinaryIO, dump_id: int) -> int:
         """Write the blobs for the entry, returning the # of bytes written
 
         :param int dump_id: The entry dump ID for the blobs
         :rtype: int
 
         """
-        self._handle.write(constants.BLK_DATA)
-        self._write_int(dump_id)
+        fp.write(constants.BLK_DATA)
+        self._write_int(fp, dump_id)
 
         writer = [w for w in self._writers.values() if w.dump_id == dump_id]
         if writer:  # Data was added ad-hoc
             writer[0].finish()
-            self._write_int(writer[0].size)
-            self._handle.write(writer[0].read())
-            self._write_int(0)  # End of data indicator
+            self._write_int(fp, writer[0].size)
+            fp.write(writer[0].read())
+            self._write_int(fp, 0)  # End of data indicator
             return writer[0].size
 
         # Data was cached on load
         with self._tempfile(dump_id, 'rb') as handle:
             handle.seek(0, io.SEEK_END)  # Seek to end to figure out size
             size = handle.tell()
-            self._write_int(size)
+            self._write_int(fp, size)
             if size:
                 handle.seek(0)  # Rewind to read data
-                self._handle.write(handle.read())
-        self._write_int(0)  # End of data indicator
+                fp.write(handle.read())
+        self._write_int(fp, 0)  # End of data indicator
         return size
 
-    def _write_timestamp(self, value: datetime.datetime) -> typing.NoReturn:
+    def _write_timestamp(self, fp: typing.BinaryIO, value: datetime.datetime) -> typing.NoReturn:
         """Write a datetime.datetime value
 
         :param datetime.datetime value: The value to write
 
         """
-        self._write_int(value.second)
-        self._write_int(value.minute)
-        self._write_int(value.hour)
-        self._write_int(value.day)
-        self._write_int(value.month - 1)
-        self._write_int(value.year - 1900)
-        self._write_int(1 if value.dst() else 0)
+        self._write_int(fp, value.second)
+        self._write_int(fp, value.minute)
+        self._write_int(fp, value.hour)
+        self._write_int(fp, value.day)
+        self._write_int(fp, value.month - 1)
+        self._write_int(fp, value.year - 1900)
+        self._write_int(fp, 1 if value.dst() else 0)
 
-    def _write_toc(self) -> typing.NoReturn:
+    def _write_toc(self, fp: typing.BinaryIO) -> typing.NoReturn:
         """Write the ToC for the file"""
-        self._handle.seek(0)
-        self._write_header()
-        self._write_int(int(self.compression))
-        self._write_timestamp(self.timestamp)
-        self._write_str(self.dbname)
-        self._write_str(self.server_version)
-        self._write_str(self.dump_version)
+        fp.seek(0)
+        self._write_header(fp)
+        self._write_int(fp, int(self.compression))
+        self._write_timestamp(fp, self.timestamp)
+        self._write_str(fp, self.dbname)
+        self._write_str(fp, self.server_version)
+        self._write_str(fp, self.dump_version)
 
 
 @dataclasses.dataclass(eq=True)
@@ -955,6 +948,7 @@ class TableData:
     :py:meth:`~pgdumplib.dump.Dump.table_data_writer`.
 
     """
+
     def __init__(self, dump_id: int, tempdir: str, encoding: str):
         self.dump_id = dump_id
         self._encoding = encoding

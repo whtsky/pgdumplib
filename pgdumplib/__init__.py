@@ -21,7 +21,8 @@ def load(filepath, converter=None):
     """
     from pgdumplib import dump
 
-    return dump.Dump(converter=converter).load(filepath)
+    with open(filepath, 'rb') as f:
+        return dump.Dump(converter=converter).load(f)
 
 
 def new(dbname: str = 'pgdumplib', encoding: str = 'UTF8',
