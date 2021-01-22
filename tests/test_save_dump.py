@@ -1,5 +1,6 @@
 import dataclasses
 import pathlib
+import subprocess
 import unittest
 import uuid
 
@@ -14,13 +15,14 @@ from pgdumplib import constants, converters, dump
 class SavedDumpTestCase(unittest.TestCase):
 
     def setUp(self):
+        self.saved_dump_path = 'build/data/dump.test'
         dmp = pgdumplib.load('build/data/dump.compressed')
-        dmp.save('build/data/dump.test')
+        dmp.save(self.saved_dump_path)
         self.original = pgdumplib.load('build/data/dump.compressed')
-        self.saved = pgdumplib.load('build/data/dump.test')
+        self.saved = pgdumplib.load(self.saved_dump_path)
 
     def tearDown(self) -> None:
-        test_file = pathlib.Path('build/data/dump.test')
+        test_file = pathlib.Path(self.saved_dump_path)
         if test_file.exists():
             test_file.unlink()
 
@@ -68,6 +70,13 @@ class SavedDumpTestCase(unittest.TestCase):
                         self.original.entries[entry].namespace,
                         self.original.entries[entry].tag,
                         offset))
+
+    def test_restore_saved_dump_without_error(self):
+        process = subprocess.Popen(
+            ['pg_restore', '-e', '-f', '-', self.saved_dump_path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = process.communicate()
+        self.assertEqual(process.returncode, 0, err)
 
 
 class EmptyDumpTestCase(unittest.TestCase):
